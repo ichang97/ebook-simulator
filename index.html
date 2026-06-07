@@ -143,3 +143,94 @@
         });
 
         function renderEpub(arrayBuffer) {
+            if (rendition) {
+                rendition.destroy();
+                rendition = null;
+            }
+            if (book) {
+                book = null;
+            }
+
+            book = ePub(arrayBuffer);
+            rendition = book.renderTo(epubViewer, {
+                width: '100%',
+                height: '100%',
+                spread: 'always',
+                flow: 'paginated'
+            });
+
+            rendition.themes.default({
+                body: {
+                    background: '#ffffff',
+                    color: '#111111',
+                    margin: '0',
+                    padding: '0',
+                    'font-family': 'serif'
+                }
+            });
+
+            rendition.on('rendered', function() {
+                viewerContainer.classList.add('refreshing');
+            });
+
+            rendition.display().catch(function(error) {
+                console.error('EPUB render error:', error);
+                alert('ไม่สามารถแสดง EPUB ได้ โปรดลองไฟล์อื่น');
+            });
+        }
+
+        function renderPdf(arrayBuffer) {
+            pdfDoc = null;
+            pageNum = 1;
+
+            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+            loadingTask.promise.then(function(pdf) {
+                pdfDoc = pdf;
+                renderPdfPage(pageNum);
+            }).catch(function(error) {
+                console.error('PDF load error:', error);
+                alert('ไม่สามารถโหลดไฟล์ PDF ได้ โปรดลองไฟล์อื่น');
+            });
+        }
+
+        function renderPdfPage(num) {
+            if (!pdfDoc) return;
+
+            pdfDoc.getPage(num).then(function(page) {
+                const viewport = page.getViewport({ scale: 1.4 });
+                pdfCanvas.height = viewport.height;
+                pdfCanvas.width = viewport.width;
+
+                const renderContext = {
+                    canvasContext: ctx,
+                    viewport: viewport
+                };
+
+                page.render(renderContext).promise.then(function() {
+                    viewerContainer.classList.add('refreshing');
+                });
+            }).catch(function(error) {
+                console.error('PDF page render error:', error);
+            });
+        }
+
+        prevBtn.addEventListener('click', function() {
+            if (currentType === 'pdf' && pdfDoc && pageNum > 1) {
+                pageNum -= 1;
+                renderPdfPage(pageNum);
+            } else if (currentType === 'epub' && rendition) {
+                rendition.prev();
+            }
+        });
+
+        nextBtn.addEventListener('click', function() {
+            if (currentType === 'pdf' && pdfDoc && pageNum < pdfDoc.numPages) {
+                pageNum += 1;
+                renderPdfPage(pageNum);
+            } else if (currentType === 'epub' && rendition) {
+                rendition.next();
+            }
+        });
+    </script>
+</body>
+</html>
