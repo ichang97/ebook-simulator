@@ -3,19 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>E-Ink Reader (EPUB/PDF)</title>
+    <title>E-Ink Reader (Pixelated & Wipe Effect)</title>
     
     <style>
         :root {
-            --eink-bg: #f4f6f4; /* สีเทากระดาษ */
-            --eink-text: #111111; /* สีดำด้าน */
+            --eink-bg: #f4f6f4;
+            --eink-text: #111111;
         }
         body {
             background-color: var(--eink-bg);
             color: var(--eink-text);
-            font-family: 'Bookerly', 'Georgia', serif; /* ฟอนต์มีหัวแบบเครื่องอ่าน E-book */
-            /* หัวใจหลักของ E-ink: บังคับขาวดำ และเพิ่มความสว่าง/คอนทราสต์ให้เหมือนหมึกบนกระดาษ */
-            filter: grayscale(100%) contrast(120%) brightness(95%);
+            font-family: 'Bookerly', 'Georgia', serif;
             margin: 0;
             padding: 20px;
             display: flex;
@@ -33,8 +31,7 @@
             padding: 8px 16px;
             cursor: pointer;
             font-weight: bold;
-            border-radius: 0; /* ตัดขอบมนทิ้ง E-ink UI มักจะเหลี่ยมๆ */
-            transition: none; /* ห้ามมีแอนิเมชัน เพื่อให้ดูหน่วงแบบ E-ink */
+            border-radius: 0;
         }
         button:hover { background: #111; color: #fff; }
         
@@ -46,12 +43,29 @@
             border: 2px solid #111;
             overflow: auto;
             position: relative;
-            box-shadow: none; /* ห้ามมีเงา */
+            
+            /* บังคับขาวดำ และเร่งคอนทราสต์ให้ภาพแตกชัดขึ้น */
+            filter: grayscale(100%) contrast(150%) brightness(95%);
+        }
+
+        /* บังคับให้ Canvas (PDF) และเนื้อหาข้างใน (EPUB) เรนเดอร์แบบแตกๆ */
+        #viewer-container canvas,
+        #viewer-container img {
+            image-rendering: pixelated; /* ทำให้พิกเซลเหลี่ยม ไม่เบลอขอบ */
         }
         
-        /* ซ่อน Canvas ของ PDF ก่อนถ้ายังไม่ได้ใช้ */
         #pdf-canvas { display: none; margin: 0 auto; }
         #epub-viewer { height: 100%; width: 100%; }
+
+        /* Animation สำหรับเอฟเฟกต์เฟดจากบนลงล่าง */
+        @keyframes wipe-down {
+            0% { clip-path: inset(0 0 100% 0); opacity: 0.8; } /* เริ่มจากซ่อนเนื้อหาด้านล่างทั้งหมด */
+            100% { clip-path: inset(0 0 0 0); opacity: 1; }   /* โชว์เต็มจอ */
+        }
+
+        .refreshing {
+            animation: wipe-down 0.4s ease-out; /* ความเร็ว 0.4 วิ ให้ดูเหมือนจอ Refresh */
+        }
     </style>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js"></script>
@@ -72,7 +86,6 @@
     </div>
 
     <script>
-        // เซ็ต Worker ให้ PDF.js ตามมาตรฐาน Docs
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
         const fileInput = document.getElementById('file-input');
@@ -80,19 +93,28 @@
         const pdfCanvas = document.getElementById('pdf-canvas');
         const prevBtn = document.getElementById('prev-btn');
         const nextBtn = document.getElementById('next-btn');
+        const viewerContainer = document.getElementById('viewer-container');
 
         let currentType = null; 
-        
-        // ตัวแปรเก็บ State ของ EPUB
         let book = null;
         let rendition = null;
-
-        // ตัวแปรเก็บ State ของ PDF
         let pdfDoc = null;
         let pageNum = 1;
         const ctx = pdfCanvas.getContext('2d');
 
-        // เมื่อมีการอัปโหลดไฟล์
+        // ฟังก์ชันจัดการ Animation เวลาเปลี่ยนหน้า
+        function triggerRefresh(actionCallback) {
+            // ถอด Class เดิมออก และบังคับให้เบราว์เซอร์ Reflow เพื่อให้ Animation เริ่มใหม่ได้
+            viewerContainer.classList.remove('refreshing');
+            void viewerContainer.offsetWidth; 
+            
+            // รันคำสั่งเปลี่ยนหน้า (ไปหน้าถัดไป หรือ หน้าก่อนหน้า)
+            actionCallback();
+            
+            // ใส่ Class กลับเข้าไปเพื่อเล่น Animation จากบนลงล่าง
+            viewerContainer.classList.add('refreshing');
+        }
+
         fileInput.addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (!file) return;
@@ -102,8 +124,6 @@
 
             reader.onload = function(event) {
                 const arrayBuffer = event.target.result;
-                
-                // เคลียร์หน้าจอเดิม
                 epubViewer.innerHTML = '';
                 pdfCanvas.style.display = 'none';
                 epubViewer.style.display = 'none';
@@ -115,68 +135,11 @@
                 } else if (extension === 'pdf') {
                     currentType = 'pdf';
                     pdfCanvas.style.display = 'block';
-                    pageNum = 1; // รีเซ็ตหน้า
+                    pageNum = 1;
                     renderPdf(arrayBuffer);
                 }
             };
-            
-            // อ่านไฟล์เป็น ArrayBuffer (รองรับทั้ง epubjs และ pdfjs)
             reader.readAsArrayBuffer(file);
         });
 
-        // --- ระบบ Render EPUB ---
         function renderEpub(arrayBuffer) {
-            book = ePub(arrayBuffer);
-            rendition = book.renderTo("epub-viewer", {
-                width: "100%",
-                height: "100%",
-                spread: "none" // บังคับให้แสดงหน้าเดียวแบบ E-reader
-            });
-            rendition.display();
-        }
-
-        // --- ระบบ Render PDF ---
-        function renderPdf(arrayBuffer) {
-            pdfjsLib.getDocument({ data: arrayBuffer }).promise.then(function(pdfDocument) {
-                pdfDoc = pdfDocument;
-                renderPdfPage(pageNum);
-            });
-        }
-
-        function renderPdfPage(num) {
-            pdfDoc.getPage(num).then(function(page) {
-                const viewport = page.getViewport({ scale: 1.5 }); // ขยายขนาดให้ชัดขึ้น
-                pdfCanvas.height = viewport.height;
-                pdfCanvas.width = viewport.width;
-
-                const renderContext = {
-                    canvasContext: ctx,
-                    viewport: viewport
-                };
-                page.render(renderContext);
-            });
-        }
-
-        // --- ระบบเปลี่ยนหน้า ---
-        prevBtn.addEventListener('click', () => {
-            if (currentType === 'epub' && rendition) {
-                rendition.prev();
-            } else if (currentType === 'pdf' && pdfDoc) {
-                if (pageNum <= 1) return;
-                pageNum--;
-                renderPdfPage(pageNum);
-            }
-        });
-
-        nextBtn.addEventListener('click', () => {
-            if (currentType === 'epub' && rendition) {
-                rendition.next();
-            } else if (currentType === 'pdf' && pdfDoc) {
-                if (pageNum >= pdfDoc.numPages) return;
-                pageNum++;
-                renderPdfPage(pageNum);
-            }
-        });
-    </script>
-</body>
-</html>
